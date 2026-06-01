@@ -61,7 +61,7 @@ export interface DatabaseSchema {
 export interface QueryRequest {
     database_id: string;
     query: string;
-    llm_provider: 'openai' | 'anthropic' | 'google' | 'ollama' | 'groq';
+    llm_provider: 'openai' | 'anthropic' | 'groq';
     llm_model: string;
     api_key: string;
     conversation_history?: Array<{ role: string; content: string }>;

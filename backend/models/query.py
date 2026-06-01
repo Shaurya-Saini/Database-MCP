@@ -10,7 +10,7 @@ class QueryRequest(BaseModel):
     
     database_id: str = Field(..., description="Database connection ID")
     query: str = Field(..., min_length=1, max_length=5000, description="Natural language query")
-    llm_provider: str = Field(..., pattern="^(openai|anthropic|google|ollama|groq)$", description="LLM provider")
+    llm_provider: str = Field(..., pattern="^(openai|anthropic|groq)$", description="LLM provider")
     llm_model: str = Field(..., description="LLM model name")
     api_key: str = Field(..., description="LLM API key (not stored)")
     conversation_history: Optional[List[Dict[str, str]]] = Field(None, description="Previous conversation messages")

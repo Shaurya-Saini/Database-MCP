@@ -23,8 +23,6 @@ from services.saved_queries_service import SavedQueriesService
 from llm_providers import (
     OpenAIProvider,
     AnthropicProvider,
-    GoogleProvider,
-    OllamaProvider,
     GroqProvider
 )
 from exceptions import (
@@ -212,20 +210,6 @@ async def get_config():
                 supports_tools=True
             ),
             LLMProviderConfig(
-                provider="google",
-                models=["gemini-pro", "gemini-pro-vision"],
-                requires_api_key=True,
-                supports_streaming=False,
-                supports_tools=False
-            ),
-            LLMProviderConfig(
-                provider="ollama",
-                models=["llama3", "mistral", "codellama", "phi"],
-                requires_api_key=False,
-                supports_streaming=False,
-                supports_tools=False
-            ),
-            LLMProviderConfig(
                 provider="groq",
                 models=["mixtral-8x7b-32768", "llama3-70b-8192", "llama3-8b-8192"],
                 requires_api_key=True,
@@ -305,10 +289,6 @@ async def execute_query(request: QueryRequest):
         llm_provider = OpenAIProvider(api_key=request.api_key, model=request.llm_model)
     elif request.llm_provider == "anthropic":
         llm_provider = AnthropicProvider(api_key=request.api_key, model=request.llm_model)
-    elif request.llm_provider == "google":
-        llm_provider = GoogleProvider(api_key=request.api_key, model=request.llm_model)
-    elif request.llm_provider == "ollama":
-        llm_provider = OllamaProvider(model=request.llm_model)
     elif request.llm_provider == "groq":
         llm_provider = GroqProvider(api_key=request.api_key, model=request.llm_model)
     else:
