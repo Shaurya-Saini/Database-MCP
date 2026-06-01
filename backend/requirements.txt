@@ -1,0 +1,27 @@
+# FastAPI and server dependencies
+fastapi==0.115.0
+uvicorn[standard]==0.32.0
+python-multipart==0.0.12
+
+# Database dependencies
+asyncpg>=0.30.0
+aiosqlite==0.20.0
+
+# Data validation and serialization
+pydantic==2.9.2
+pydantic-settings==2.6.0
+
+# Security and encryption
+cryptography==43.0.1
+
+# MCP SDK (Model Context Protocol)
+mcp>=1.0.0
+
+# LLM provider SDKs
+openai==1.51.2
+anthropic==0.39.0
+groq>=0.4.0
+google-genai>=0.8.0
+
+# Utilities
+python-dotenv==1.0.1
