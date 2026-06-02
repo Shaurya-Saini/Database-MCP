@@ -42,13 +42,14 @@ export default function Sidebar({ activeTab, onTabChange, collapsed, onToggle }:
           width: 32,
           height: 32,
           borderRadius: 8,
-          background: 'linear-gradient(135deg, var(--primary), #8b5cf6)',
+          background: 'var(--accent)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
           flexShrink: 0,
+          boxShadow: 'var(--shadow-neu-sm)',
         }}>
-          <Database size={18} color="#fff" />
+          <Database size={18} color="var(--text-on-accent)" />
         </div>
         {!collapsed && (
           <div style={{ overflow: 'hidden' }}>

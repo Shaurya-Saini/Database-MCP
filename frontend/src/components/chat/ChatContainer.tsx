@@ -80,13 +80,13 @@ function EmptyState({ isReady, onExampleClick }: { isReady: boolean; onExampleCl
         width: 72,
         height: 72,
         borderRadius: 20,
-        background: 'linear-gradient(135deg, var(--primary), #8b5cf6)',
+        background: 'var(--accent)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        boxShadow: 'var(--shadow-glow)',
+        boxShadow: 'var(--shadow-neu-sm)',
       }}>
-        <MessageSquare size={32} color="#fff" />
+        <MessageSquare size={32} color="var(--text-on-accent)" />
       </div>
 
       <div style={{ textAlign: 'center', maxWidth: 480 }}>
@@ -113,7 +113,7 @@ function EmptyState({ isReady, onExampleClick }: { isReady: boolean; onExampleCl
           { icon: Sparkles, label: 'MCP Protocol', desc: 'Secure tool-based query execution' },
         ].map(({ icon: Icon, label, desc }) => (
           <div key={label} className="card" style={{ textAlign: 'center', padding: 14 }}>
-            <Icon size={20} style={{ color: 'var(--primary)', marginBottom: 6 }} />
+            <Icon size={20} style={{ color: 'var(--accent)', marginBottom: 6 }} />
             <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{label}</div>
             <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 2 }}>{desc}</div>
           </div>

@@ -1,7 +1,7 @@
 /**
  * Top header bar with database selector, LLM badge, and theme toggle.
  */
-import { Sun, Moon, Cpu, ChevronDown, AlertCircle } from 'lucide-react'
+import { Cpu, ChevronDown, AlertCircle } from 'lucide-react'
 import type { DatabaseConnection } from '../../types'
 import type { LLMConfig } from '../../hooks/useAppState'
 
@@ -12,8 +12,6 @@ interface HeaderProps {
   llmConfig: LLMConfig
   isLlmConfigured: boolean
   onLlmClick: () => void
-  isDark: boolean
-  onToggleTheme: () => void
 }
 
 export default function Header({
@@ -23,8 +21,6 @@ export default function Header({
   llmConfig,
   isLlmConfigured,
   onLlmClick,
-  isDark,
-  onToggleTheme,
 }: HeaderProps) {
   const activeDb = databases.find(d => d.id === activeDatabaseId)
 
@@ -73,14 +69,6 @@ export default function Header({
         <ChevronDown size={12} />
       </button>
 
-      {/* Theme Toggle */}
-      <button
-        className="btn btn-ghost btn-icon"
-        onClick={onToggleTheme}
-        title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
-      >
-        {isDark ? <Sun size={18} /> : <Moon size={18} />}
-      </button>
     </header>
   )
 }

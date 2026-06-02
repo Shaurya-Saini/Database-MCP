@@ -103,8 +103,6 @@ function App() {
           llmConfig={state.llmConfig}
           isLlmConfigured={state.isLlmConfigured}
           onLlmClick={handleLlmClick}
-          isDark={state.isDark}
-          onToggleTheme={state.toggleTheme}
         />
 
         <div className="app-content">

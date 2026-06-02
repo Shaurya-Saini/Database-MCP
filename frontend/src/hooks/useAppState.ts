@@ -64,10 +64,6 @@ export function useAppState() {
     loadFromStorage('llmConfig', DEFAULT_LLM_CONFIG)
   )
 
-  // Theme
-  const [isDark, setIsDarkState] = useState<boolean>(
-    loadFromStorage('theme', window.matchMedia('(prefers-color-scheme: dark)').matches)
-  )
 
   // Sidebar collapsed
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
@@ -89,14 +85,9 @@ export function useAppState() {
     saveToStorage('llmConfig', config)
   }, [])
 
-  // Persist and apply theme
+  // Enforce dark theme just in case
   useEffect(() => {
-    document.documentElement.classList.toggle('dark', isDark)
-    saveToStorage('theme', isDark)
-  }, [isDark])
-
-  const toggleTheme = useCallback(() => {
-    setIsDarkState(prev => !prev)
+    document.documentElement.classList.add('dark')
   }, [])
 
   const toggleSidebar = useCallback(() => {
@@ -142,9 +133,7 @@ export function useAppState() {
     isLlmConfigured,
     llmModels: LLM_MODELS,
 
-    // Theme
-    isDark,
-    toggleTheme,
+
 
     // Sidebar
     sidebarCollapsed,
