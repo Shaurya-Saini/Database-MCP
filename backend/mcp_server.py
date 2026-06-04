@@ -254,6 +254,154 @@ async def get_table_schema(ctx: Context, table_name: str = None) -> str:
         return f"Schema error: {str(e)}"
 
 
+def _safe_ident(identifier: str) -> str:
+    """
+    Safely quote a SQL identifier (table name, column name) to prevent injection.
+    Only allows alphanumeric characters and underscores.
+    """
+    import re
+    if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", identifier):
+        raise ValueError(f"Invalid identifier: {identifier}")
+    return f'"{identifier}"'
+
+
+@mcp.tool()
+async def sample_table_data(
+    ctx: Context,
+    table_name: str,
+    column_name: str | None = None,
+    sample_limit: int = 5,
+) -> str:
+    """
+    Explore actual data inside a table. Use this BEFORE writing any query
+    to understand what values exist in the database.
+
+    Two modes:
+    - Without column_name: Returns sample rows from the table so you can see
+      what the data looks like, along with the total row count.
+    - With column_name: Returns all distinct values in that column (up to 50)
+      so you know exactly what values exist to filter on.
+
+    Args:
+        table_name: Name of the table to explore
+        column_name: Optional specific column to get distinct values for
+        sample_limit: Number of sample rows to return (default 5, max 20)
+
+    Returns:
+        Formatted data exploration results
+    """
+    sample_limit = min(max(sample_limit, 1), 20)
+
+    try:
+        db_context = ctx.request_context.lifespan_context
+        pool = db_context.pool
+
+        async with pool.acquire() as connection:
+            # Verify the table exists in public schema
+            table_exists = await asyncio.wait_for(
+                connection.fetchval(
+                    """
+                    SELECT EXISTS (
+                        SELECT 1 FROM information_schema.tables
+                        WHERE table_schema = 'public' AND table_name = $1
+                    )
+                    """,
+                    table_name,
+                ),
+                timeout=10.0,
+            )
+            if not table_exists:
+                return f"Table '{table_name}' not found in the database."
+
+            result_lines = []
+            safe_table = _safe_ident(table_name)
+
+            # Always show row count
+            row_count = await asyncio.wait_for(
+                connection.fetchval(f"SELECT COUNT(*) FROM {safe_table}"),
+                timeout=15.0,
+            )
+            result_lines.append(f"Table '{table_name}' has {row_count} total rows.\n")
+
+            if column_name:
+                # Verify column exists
+                col_exists = await asyncio.wait_for(
+                    connection.fetchval(
+                        """
+                        SELECT EXISTS (
+                            SELECT 1 FROM information_schema.columns
+                            WHERE table_name = $1 AND column_name = $2
+                        )
+                        """,
+                        table_name,
+                        column_name,
+                    ),
+                    timeout=10.0,
+                )
+                if not col_exists:
+                    return f"Column '{column_name}' not found in table '{table_name}'."
+
+                safe_col = _safe_ident(column_name)
+
+                # Get distinct values for the column
+                distinct_rows = await asyncio.wait_for(
+                    connection.fetch(
+                        f"SELECT DISTINCT {safe_col} FROM {safe_table} "
+                        f"WHERE {safe_col} IS NOT NULL "
+                        f"ORDER BY {safe_col} LIMIT 50"
+                    ),
+                    timeout=15.0,
+                )
+
+                distinct_count = await asyncio.wait_for(
+                    connection.fetchval(
+                        f"SELECT COUNT(DISTINCT {safe_col}) FROM {safe_table} "
+                        f"WHERE {safe_col} IS NOT NULL"
+                    ),
+                    timeout=15.0,
+                )
+
+                result_lines.append(
+                    f"Distinct values in '{column_name}' "
+                    f"({distinct_count} unique values):"
+                )
+                for row in distinct_rows:
+                    result_lines.append(f"  - {row[0]}")
+                if distinct_count > 50:
+                    result_lines.append(f"  ... and {distinct_count - 50} more")
+            else:
+                # Sample rows from the table
+                sample_rows = await asyncio.wait_for(
+                    connection.fetch(
+                        f"SELECT * FROM {safe_table} LIMIT {sample_limit}"
+                    ),
+                    timeout=15.0,
+                )
+
+                if not sample_rows:
+                    result_lines.append("Table is empty.")
+                else:
+                    headers = list(sample_rows[0].keys())
+                    result_lines.append(
+                        f"Sample of {len(sample_rows)} rows "
+                        f"(columns: {', '.join(headers)}):\n"
+                    )
+                    result_lines.append(" | ".join(headers))
+                    result_lines.append("-" * (len(" | ".join(headers))))
+                    for row in sample_rows:
+                        result_lines.append(
+                            " | ".join(str(v) for v in row.values())
+                        )
+
+            return "\n".join(result_lines)
+
+    except asyncio.TimeoutError:
+        return "Data exploration error: Query timeout"
+    except Exception as e:
+        logger.error(f"Data exploration error: {e}")
+        return f"Data exploration error: {str(e)}"
+
+
 @mcp.tool()
 async def test_connection(ctx: Context) -> str:
     """

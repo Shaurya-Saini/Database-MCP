@@ -234,20 +234,41 @@ class MCPClient:
 
 You have access to database tools via MCP (Model Context Protocol):
 - `get_table_schema`: Get schema info for all tables or a specific table
+- `sample_table_data`: Explore actual data in a table — see sample rows or distinct values in a column
 - `query_database`: Execute SELECT queries against the database
 - `test_connection`: Test the database connection
 
-WORKFLOW:
-1. First, call `get_table_schema` to understand the database structure
-2. Then formulate and execute SQL queries using `query_database`
-3. Analyze the results and provide a clear, helpful response
+WORKFLOW — you MUST follow these steps in order every time:
+
+1. DISCOVER STRUCTURE: Call `get_table_schema` (no args) to list all tables in the database.
+
+2. INSPECT RELEVANT TABLES: For each table that looks relevant to the user's question,
+   call `get_table_schema(table_name=...)` to see its columns and data types.
+
+3. EXPLORE ACTUAL DATA (THIS IS THE MOST CRITICAL STEP):
+   Before writing ANY query, you MUST understand the actual data stored in the tables.
+   - Call `sample_table_data(table_name=...)` to see sample rows and understand
+     what kind of data is stored, what the values look like, and how the data is organized.
+   - Call `sample_table_data(table_name=..., column_name=...)` on any column you plan
+     to filter or group by — this shows you the exact distinct values that exist.
+   - This step is essential. Without it you will guess wrong about what values exist
+     and your queries will return 0 rows.
+
+4. WRITE AN INFORMED QUERY: Now that you understand the schema AND the actual data,
+   construct a SQL query that accurately matches the real values in the database.
+   Use the exact values, patterns, and column names you observed in step 3.
+
+5. EXECUTE: Call `query_database` with your well-informed SQL query.
+
+6. ANALYZE & RESPOND: Present the results clearly to the user with context.
 
 RULES:
 - Only generate SELECT queries (read-only)
-- Always check the schema before querying to use correct table/column names
+- NEVER skip the data exploration step — always look at real data before querying
+- NEVER guess what values might exist in a column — always check first
+- If a query returns no results, go back and explore the data again to understand why
 - Include the SQL query you used in your response
-- Format results clearly for the user
-- If a query returns no results, explain why and suggest alternatives"""
+- Format results clearly for the user"""
 
         # Build messages
         messages = [{"role": "system", "content": system_prompt}]
