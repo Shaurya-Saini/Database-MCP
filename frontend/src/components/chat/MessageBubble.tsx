@@ -19,25 +19,25 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
   return <AssistantMessage message={message} />
 }
 
-// Utility to strip redundant SQL blocks if they match the actual executed query
-function stripSQLFromContent(content: string, sqlQuery?: string): string {
-  if (!sqlQuery || !content) return content
+// Utility to strip redundant SQL blocks if they match any of the executed queries
+function stripSQLFromContent(content: string, sqlQueries: string[]): string {
+  if (!sqlQueries.length || !content) return content
   
-  // Remove markdown SQL blocks
+  // Remove markdown SQL blocks that match any executed query
   let cleaned = content.replace(/```sql[\s\S]*?```/gi, (match) => {
-    // If the block contains something very similar to the actual query, strip it
-    // otherwise keep it
     const blockContent = match.replace(/```sql|```/gi, '').trim()
-    if (sqlQuery.includes(blockContent) || blockContent.includes(sqlQuery)) {
-      return ''
-    }
-    return match
+    const matchesAny = sqlQueries.some(
+      q => q.includes(blockContent) || blockContent.includes(q)
+    )
+    return matchesAny ? '' : match
   })
 
   // Strip common LLM boilerplate text before the stripped query
   cleaned = cleaned.replace(/The SQL query used to retrieve this information was:?\s*/gi, '')
   cleaned = cleaned.replace(/Here is the SQL query used:?\s*/gi, '')
   cleaned = cleaned.replace(/The query used was:?\s*/gi, '')
+  cleaned = cleaned.replace(/Here are the SQL queries I used:?\s*/gi, '')
+  cleaned = cleaned.replace(/The queries used were:?\s*/gi, '')
 
   return cleaned.trim()
 }
@@ -86,12 +86,20 @@ function AssistantMessage({ message }: { message: ChatMessage }) {
   const [hasOverflow, setHasOverflow] = useState(false)
   const [scrolledEnd, setScrolledEnd] = useState(false)
 
+  // Build the full list of queries: prefer sqlQueries array, fall back to single sqlQuery
+  const allQueries: string[] = (message.sqlQueries && message.sqlQueries.length > 0)
+    ? message.sqlQueries
+    : (message.sqlQuery ? [message.sqlQuery] : [])
+
   // Cleaned content to prevent redundancy
-  const cleanContent = stripSQLFromContent(message.content, message.sqlQuery)
+  const cleanContent = stripSQLFromContent(message.content, allQueries)
 
   const handleCopySQL = async () => {
-    if (!message.sqlQuery) return
-    await navigator.clipboard.writeText(message.sqlQuery)
+    if (!allQueries.length) return
+    const textToCopy = allQueries.length === 1
+      ? allQueries[0]
+      : allQueries.map((q, i) => `-- Query ${i + 1}\n${q}`).join('\n\n')
+    await navigator.clipboard.writeText(textToCopy)
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
   }
@@ -144,8 +152,8 @@ function AssistantMessage({ message }: { message: ChatMessage }) {
         <MarkdownRenderer content={cleanContent} />
       )}
 
-      {/* SQL Query Block */}
-      {message.sqlQuery && (
+      {/* SQL Queries Block */}
+      {allQueries.length > 0 && (
         <div className="code-block" style={{ marginTop: cleanContent ? 16 : 0 }}>
           <div className="code-block-header">
             <button
@@ -164,13 +172,15 @@ function AssistantMessage({ message }: { message: ChatMessage }) {
               }}
             >
               {sqlExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-              SQL QUERY
+              {allQueries.length === 1
+                ? 'SQL QUERY'
+                : `SQL QUERIES (${allQueries.length})`}
             </button>
             <button
               onClick={handleCopySQL}
               className="btn btn-ghost btn-sm"
               style={{ padding: '2px 8px', fontSize: 11, height: 24 }}
-              title="Copy SQL"
+              title={allQueries.length > 1 ? 'Copy all SQL' : 'Copy SQL'}
             >
               {copied ? <Check size={12} style={{ color: 'var(--success)' }} /> : <Copy size={12} />}
               <span style={{ color: copied ? 'var(--success)' : 'inherit' }}>
@@ -179,8 +189,31 @@ function AssistantMessage({ message }: { message: ChatMessage }) {
             </button>
           </div>
           {sqlExpanded && (
-            <div className="code-block-content">
-              {message.sqlQuery}
+            <div>
+              {allQueries.map((q, idx) => (
+                <div key={idx}>
+                  {allQueries.length > 1 && (
+                    <div style={{
+                      fontSize: 10,
+                      fontWeight: 600,
+                      color: 'var(--text-tertiary)',
+                      padding: '8px 14px 2px',
+                      letterSpacing: '0.05em',
+                      textTransform: 'uppercase',
+                    }}>
+                      Query {idx + 1} of {allQueries.length}
+                    </div>
+                  )}
+                  <div className="code-block-content"
+                    style={allQueries.length > 1 && idx < allQueries.length - 1 ? {
+                      borderBottom: '1px solid var(--border)',
+                      marginBottom: 0,
+                    } : undefined}
+                  >
+                    {q}
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </div>

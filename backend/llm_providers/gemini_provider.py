@@ -1,30 +1,41 @@
 """
-OpenAI LLM provider implementation.
+Google Gemini LLM provider implementation (using OpenAI SDK compatibility).
 """
 import json
 from typing import List, Dict, Any, Optional, Union, AsyncIterator
-from openai import AsyncOpenAI
+try:
+    from openai import AsyncOpenAI
+except ImportError:
+    AsyncOpenAI = None
 from .base import LLMProvider
 
 
-class OpenAIProvider(LLMProvider):
-    """OpenAI GPT provider implementation."""
+class GeminiProvider(LLMProvider):
+    """Google Gemini provider implementation via OpenAI compatibility endpoint."""
     
-    def __init__(self, api_key: str, model: str = "gpt-4o"):
+    def __init__(self, api_key: str, model: str = "gemini-2.5-flash"):
         """
-        Initialize OpenAI provider.
+        Initialize Gemini provider.
         
         Args:
-            api_key: OpenAI API key
-            model: Model name (default: gpt-4o)
+            api_key: Gemini API key
+            model: Model name (default: gemini-2.5-flash)
         """
         super().__init__(api_key, model)
-        self.client = AsyncOpenAI(api_key=api_key)
+        
+        if AsyncOpenAI is None:
+            raise ImportError(
+                "OpenAI SDK not installed. Install with: pip install openai"
+            )
+            
+        self.client = AsyncOpenAI(
+            api_key=api_key,
+            base_url="https://generativelanguage.googleapis.com/v1beta/openai/"
+        )
         self._supported_models = [
-            "gpt-4o",
-            "gpt-4-turbo",
-            "gpt-4",
-            "gpt-3.5-turbo"
+            "gemini-2.5-flash",
+            "gemini-2.5-pro",
+            "gemini-2.0-flash",
         ]
     
     async def chat_completion(
@@ -35,7 +46,7 @@ class OpenAIProvider(LLMProvider):
         max_tokens: Optional[int] = None,
         stream: bool = False
     ) -> Union[Dict[str, Any], AsyncIterator[Dict[str, Any]]]:
-        """Generate chat completion using OpenAI API."""
+        """Generate chat completion using Gemini API via OpenAI client."""
         params = {
             "model": self.model,
             "messages": messages,
@@ -57,7 +68,7 @@ class OpenAIProvider(LLMProvider):
             return self._format_response(response)
     
     def convert_tools_format(self, mcp_tools: List[Any]) -> List[Dict[str, Any]]:
-        """Convert MCP tools to OpenAI function calling format."""
+        """Convert MCP tools to OpenAI/Gemini function calling format."""
         openai_tools = []
         
         for tool in mcp_tools:
@@ -74,7 +85,7 @@ class OpenAIProvider(LLMProvider):
         return openai_tools
     
     def parse_tool_calls(self, response: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Extract tool calls from OpenAI response."""
+        """Extract tool calls from Gemini response."""
         tool_calls = []
         
         message = response.get("choices", [{}])[0].get("message", {})
@@ -90,7 +101,7 @@ class OpenAIProvider(LLMProvider):
         return tool_calls
     
     async def validate_api_key(self) -> bool:
-        """Validate OpenAI API key."""
+        """Validate Gemini API key."""
         try:
             await self.client.models.list()
             return True
@@ -99,11 +110,11 @@ class OpenAIProvider(LLMProvider):
     
     @property
     def supported_models(self) -> List[str]:
-        """List of supported OpenAI models."""
+        """List of supported Gemini models."""
         return self._supported_models
     
     def _format_response(self, response) -> Dict[str, Any]:
-        """Format OpenAI response to standard format."""
+        """Format Gemini response to standard format."""
         choice = response.choices[0]
         result = {
             "content": choice.message.content,

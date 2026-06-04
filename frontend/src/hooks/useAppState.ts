@@ -7,7 +7,7 @@ import { useState, useCallback, useEffect } from 'react'
 export type TabId = 'chat' | 'history' | 'saved' | 'settings'
 
 export interface LLMConfig {
-  provider: 'openai' | 'anthropic' | 'groq'
+  provider: 'openai' | 'anthropic' | 'groq' | 'gemini'
   model: string
   apiKey: string
 }
@@ -17,6 +17,7 @@ export interface ChatMessage {
   role: 'user' | 'assistant'
   content: string
   sqlQuery?: string
+  sqlQueries?: string[]
   results?: Array<Record<string, any>>
   rowCount?: number
   executionTimeMs?: number
@@ -25,15 +26,16 @@ export interface ChatMessage {
 }
 
 const DEFAULT_LLM_CONFIG: LLMConfig = {
-  provider: 'groq',
-  model: 'llama-3.3-70b-versatile',
+  provider: 'gemini',
+  model: 'gemini-2.5-flash',
   apiKey: '',
 }
 
 const LLM_MODELS: Record<string, string[]> = {
   openai: ['gpt-4o', 'gpt-4-turbo', 'gpt-4', 'gpt-3.5-turbo'],
   anthropic: ['claude-3-5-sonnet-20241022', 'claude-3-opus-20240229', 'claude-3-haiku-20240307'],
-  groq: ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'mixtral-8x7b-32768'],
+  groq: ['meta-llama/llama-4-scout-17b-16e-instruct', 'meta-llama/llama-4-maverick-17b-128e-instruct', 'llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'qwen-2.5-32b'],
+  gemini: ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash'],
 }
 
 function loadFromStorage<T>(key: string, fallback: T): T {

@@ -46,6 +46,7 @@ function App() {
         role: 'assistant',
         content: response.natural_language_response,
         sqlQuery: response.sql_query,
+        sqlQueries: response.sql_queries,
         results: response.results,
         rowCount: response.row_count,
         executionTimeMs: response.execution_time_ms,

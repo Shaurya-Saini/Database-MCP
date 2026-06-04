@@ -4,33 +4,38 @@ A natural language interface for PostgreSQL databases, powered by **MCP (Model C
 
 ## Architecture
 
-```
-┌──────────────────────────────────────────────────────────────────────┐
-│  Frontend (React + TypeScript + Tailwind CSS)                        │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────────────────┐ │
-│  │ Chat UI  │  │ History  │  │  Saved   │  │ Settings (DB + LLM) │ │
-│  └────┬─────┘  └──────────┘  └──────────┘  └──────────────────────┘ │
-│       │  REST API (axios + TanStack Query)                           │
-└───────┼──────────────────────────────────────────────────────────────┘
-        │
-┌───────┼──────────────────────────────────────────────────────────────┐
-│  Backend (FastAPI)                                                    │
-│       │                                                               │
-│  ┌────▼─────┐     ┌──────────────┐     ┌──────────────────────────┐  │
-│  │ API Layer│────▶│ Query        │────▶│ MCP Client               │  │
-│  │ 25 endpts│     │ Executor     │     │ (Generic, LLM-agnostic)  │  │
-│  └──────────┘     └──────────────┘     └──────────┬───────────────┘  │
-│                                                    │ stdio            │
-│  ┌──────────────┐  ┌──────────────┐     ┌──────────▼───────────────┐ │
-│  │ History Svc  │  │ Saved Query  │     │ MCP Server               │ │
-│  │ (SQLite)     │  │ Svc (SQLite) │     │ (FastMCP + asyncpg)      │ │
-│  └──────────────┘  └──────────────┘     └──────────┬───────────────┘ │
-│                                                    │                  │
-│  ┌──────────────────────────────────┐   ┌──────────▼───────────────┐ │
-│  │ LLM Providers                    │   │ PostgreSQL Database(s)   │ │
-│  │ OpenAI │ Anthropic │ Groq        │   │ (User-configured)        │ │
-│  └──────────────────────────────────┘   └──────────────────────────┘ │
-└──────────────────────────────────────────────────────────────────────┘
+```text
+┌─────────────────────────────────────────────────────────────────────────┐
+│                           FRONTEND (React 19)                           │
+│                                                                         │
+│   [ Chat UI ]   [ History ]   [ Saved Queries ]   [ Settings ]          │
+└────────────────────────────────────┬────────────────────────────────────┘
+                                     │
+                                     ▼ REST API (Axios)
+┌─────────────────────────────────────────────────────────────────────────┐
+│                           BACKEND (FastAPI)                             │
+│                                                                         │
+│   ┌────────────────┐      ┌─────────────────┐      ┌────────────────┐   │
+│   │   API Layer    │─────▶│ Query Executor  │─────▶│   MCP Client  │   │
+│   └───────┬────────┘      └─────────────────┘      └────────┬───────┘   │
+│           │                                                 │           │
+│           ▼                                                 ▼           │
+│   ┌────────────────┐                               ┌────────────────┐   │
+│   │ SQLite Storage │                               │  LLM Providers │   │
+│   │ (History/Saved)│                               │(Gemini/Groq/etc)│  │
+│   └────────────────┘                               └────────────────┘   │
+│                                                             │           │
+└─────────────────────────────────────────────────────────────┼───────────┘
+                                                              │ stdio
+                                                              ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                           DATA INFRASTRUCTURE                           │
+│                                                                         │
+│                      [ MCP Server (FastMCP) ]                           │
+│                                  │                                      │
+│                                  ▼ asyncpg                              │
+│                      [ PostgreSQL Database ]                            │
+└─────────────────────────────────────────────────────────────────────────┘
 ```
 
 ## How MCP Works in This Project
@@ -45,7 +50,7 @@ The **Model Context Protocol (MCP)** is the core architectural pattern:
 2. **MCP Client** (`backend/services/mcp_client.py`) — Orchestrates the LLM ↔ MCP Server loop:
    - Starts the MCP Server as a subprocess with the target database's credentials
    - Discovers available tools from the server via the MCP protocol
-   - Converts MCP tools to the active LLM provider's format (OpenAI, Anthropic, or Groq)
+   - Converts MCP tools to the active LLM provider's format (Gemini, Groq, OpenAI, Anthropic)
    - Runs the LLM tool-calling loop until the model produces a final answer
    - The LLM decides which tools to call, not the application code
 
@@ -83,7 +88,7 @@ The **Model Context Protocol (MCP)** is the core architectural pattern:
 | **aiosqlite** | SQLite for config/history/saved queries |
 | **Pydantic** | Data validation |
 | **cryptography** | Password encryption (Fernet) |
-| **OpenAI / Anthropic / Groq SDKs** | LLM provider integrations |
+| **Google Gemini / OpenAI / Anthropic / Groq SDKs** | LLM provider integrations |
 
 ### Frontend
 | Technology | Purpose |
@@ -124,6 +129,7 @@ New Project/
 │   │   └── saved_queries_service.py # Saved queries (SQLite)
 │   └── llm_providers/
 │       ├── base.py               # Abstract LLM provider
+│       ├── gemini_provider.py    # Google Gemini integration
 │       ├── openai_provider.py    # OpenAI GPT integration
 │       ├── anthropic_provider.py # Anthropic Claude integration
 │       └── groq_provider.py      # Groq (free tier) integration

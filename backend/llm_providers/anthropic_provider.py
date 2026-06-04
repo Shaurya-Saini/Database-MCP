@@ -124,9 +124,17 @@ class AnthropicProvider(LLMProvider):
                     "arguments": block.input
                 })
         
-        return {
+        result = {
             "content": content_text,
             "role": "assistant",
             "tool_calls": tool_calls if tool_calls else None,
             "finish_reason": response.stop_reason
         }
+        # Include token usage if available
+        if hasattr(response, "usage") and response.usage:
+            result["usage"] = {
+                "prompt_tokens": response.usage.input_tokens,
+                "completion_tokens": response.usage.output_tokens,
+                "total_tokens": response.usage.input_tokens + response.usage.output_tokens,
+            }
+        return result

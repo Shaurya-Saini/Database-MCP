@@ -61,7 +61,7 @@ export interface DatabaseSchema {
 export interface QueryRequest {
     database_id: string;
     query: string;
-    llm_provider: 'openai' | 'anthropic' | 'groq';
+    llm_provider: 'openai' | 'anthropic' | 'groq' | 'gemini';
     llm_model: string;
     api_key: string;
     conversation_history?: Array<{ role: string; content: string }>;
@@ -71,6 +71,7 @@ export interface QueryRequest {
 export interface QueryResponse {
     natural_language_response: string;
     sql_query: string;
+    sql_queries: string[];
     results: Array<Record<string, any>>;
     row_count: number;
     execution_time_ms: number;

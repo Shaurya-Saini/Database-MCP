@@ -106,9 +106,10 @@ Open `http://localhost:5173` in your browser. You'll see the chat interface with
 
 1. Click **Settings** in the sidebar (gear icon)
 2. Under **LLM Provider**:
-   - Select a provider (Groq recommended — free tier)
-   - Select a model
+   - Select a provider (**Google Gemini recommended** — most generous free tier)
+   - Select a model (e.g. `gemini-2.5-flash`)
    - Enter your API key
+   - **Google Gemini**: Get a free API key at [aistudio.google.com](https://aistudio.google.com/app/apikey)
    - **Groq**: Get a free API key at [console.groq.com](https://console.groq.com)
    - **OpenAI**: Get a key at [platform.openai.com/api-keys](https://platform.openai.com/api-keys)
    - **Anthropic**: Get a key at [console.anthropic.com](https://console.anthropic.com)

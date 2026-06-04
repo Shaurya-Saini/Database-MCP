@@ -10,7 +10,7 @@ class QueryRequest(BaseModel):
     
     database_id: str = Field(..., description="Database connection ID")
     query: str = Field(..., min_length=1, max_length=5000, description="Natural language query")
-    llm_provider: str = Field(..., pattern="^(openai|anthropic|groq)$", description="LLM provider")
+    llm_provider: str = Field(..., pattern="^(openai|anthropic|groq|gemini)$", description="LLM provider")
     llm_model: str = Field(..., description="LLM model name")
     api_key: str = Field(..., description="LLM API key (not stored)")
     conversation_history: Optional[List[Dict[str, str]]] = Field(None, description="Previous conversation messages")
@@ -21,9 +21,11 @@ class QueryResponse(BaseModel):
     """Response model for query execution."""
     
     natural_language_response: str = Field(..., description="Natural language explanation of results")
-    sql_query: str = Field(..., description="Generated SQL query")
+    sql_query: str = Field(..., description="Last SQL query executed (for backward compatibility)")
+    sql_queries: List[str] = Field(default_factory=list, description="All SQL queries executed during analysis")
     results: List[Dict[str, Any]] = Field(..., description="Query results")
     row_count: int = Field(..., description="Number of rows returned")
     execution_time_ms: float = Field(..., description="Query execution time in milliseconds")
     truncated: bool = Field(..., description="Whether results were truncated")
     error: Optional[str] = Field(None, description="Error message if query failed")
+

@@ -140,6 +140,7 @@ function LLMConfigSection({
           <option value="openai">OpenAI</option>
           <option value="anthropic">Anthropic</option>
           <option value="groq">Groq (Free Tier)</option>
+          <option value="gemini">Google Gemini (Free Tier)</option>
         </select>
       </div>
 
@@ -177,7 +178,7 @@ function LLMConfigSection({
           </button>
         </div>
         <p style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>
-          {config.provider === 'groq' ? 'Free API key at console.groq.com' : 'Stored locally in your browser only'}
+          {config.provider === 'groq' ? 'Free API key at console.groq.com' : config.provider === 'gemini' ? 'Free API key at aistudio.google.com' : 'Stored locally in your browser only'}
         </p>
       </div>
     </div>

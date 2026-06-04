@@ -107,6 +107,7 @@ class QueryExecutor:
             return QueryResponse(
                 natural_language_response=result.get("natural_language_response", ""),
                 sql_query=result.get("sql_query", ""),
+                sql_queries=result.get("sql_queries", []),
                 results=result.get("results", []),
                 row_count=result.get("row_count", 0),
                 execution_time_ms=result.get("execution_time_ms", 0),

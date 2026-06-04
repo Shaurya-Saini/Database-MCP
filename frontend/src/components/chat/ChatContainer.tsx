@@ -109,7 +109,7 @@ function EmptyState({ isReady, onExampleClick }: { isReady: boolean; onExampleCl
       }}>
         {[
           { icon: Database, label: 'Multi-Database', desc: 'Connect to multiple PostgreSQL instances' },
-          { icon: Cpu, label: 'Multi-LLM', desc: 'OpenAI, Anthropic, or Groq' },
+          { icon: Cpu, label: 'Multi-LLM', desc: 'OpenAI, Anthropic, Groq, or Gemini' },
           { icon: Sparkles, label: 'MCP Protocol', desc: 'Secure tool-based query execution' },
         ].map(({ icon: Icon, label, desc }) => (
           <div key={label} className="card" style={{ textAlign: 'center', padding: 14 }}>

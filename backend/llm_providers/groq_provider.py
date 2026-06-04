@@ -15,13 +15,13 @@ from .base import LLMProvider
 class GroqProvider(LLMProvider):
     """Groq fast inference provider implementation."""
     
-    def __init__(self, api_key: str, model: str = "llama-3.3-70b-versatile"):
+    def __init__(self, api_key: str, model: str = "meta-llama/llama-4-scout-17b-16e-instruct"):
         """
         Initialize Groq provider.
         
         Args:
             api_key: Groq API key
-            model: Model name (default: llama-3.3-70b-versatile)
+            model: Model name (default: meta-llama/llama-4-scout-17b-16e-instruct)
         """
         super().__init__(api_key, model)
         
@@ -32,9 +32,11 @@ class GroqProvider(LLMProvider):
         
         self.client = AsyncGroq(api_key=api_key)
         self._supported_models = [
+            "meta-llama/llama-4-scout-17b-16e-instruct",
+            "meta-llama/llama-4-maverick-17b-128e-instruct",
             "llama-3.3-70b-versatile",
             "llama-3.1-8b-instant",
-            "mixtral-8x7b-32768"
+            "qwen-2.5-32b",
         ]
     
     async def chat_completion(
@@ -55,6 +57,7 @@ class GroqProvider(LLMProvider):
         
         if tools:
             params["tools"] = tools
+            params["tool_choice"] = "auto"
         
         if max_tokens:
             params["max_tokens"] = max_tokens
@@ -112,9 +115,17 @@ class GroqProvider(LLMProvider):
     def _format_response(self, response) -> Dict[str, Any]:
         """Format Groq response to standard format."""
         choice = response.choices[0]
-        return {
+        result = {
             "content": choice.message.content,
             "role": choice.message.role,
             "tool_calls": choice.message.tool_calls if hasattr(choice.message, "tool_calls") else None,
             "finish_reason": choice.finish_reason
         }
+        # Include token usage if available
+        if hasattr(response, "usage") and response.usage:
+            result["usage"] = {
+                "prompt_tokens": response.usage.prompt_tokens,
+                "completion_tokens": response.usage.completion_tokens,
+                "total_tokens": response.usage.total_tokens,
+            }
+        return result

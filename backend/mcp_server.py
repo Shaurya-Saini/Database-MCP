@@ -403,6 +403,92 @@ async def sample_table_data(
 
 
 @mcp.tool()
+async def get_table_relationships(ctx: Context, table_name: str | None = None) -> str:
+    """
+    Discover foreign key relationships between tables.
+    Use this BEFORE writing JOINs to understand how tables connect to each other.
+
+    Args:
+        table_name: Optional specific table to get relationships for.
+                    If omitted, returns ALL relationships in the database.
+
+    Returns:
+        Formatted list of foreign key relationships showing
+        source_table.column → target_table.column
+    """
+    try:
+        db_context = ctx.request_context.lifespan_context
+        pool = db_context.pool
+
+        async with pool.acquire() as connection:
+            query = """
+                SELECT
+                    tc.table_name AS source_table,
+                    kcu.column_name AS source_column,
+                    ccu.table_name AS target_table,
+                    ccu.column_name AS target_column,
+                    tc.constraint_name
+                FROM information_schema.table_constraints AS tc
+                JOIN information_schema.key_column_usage AS kcu
+                    ON tc.constraint_name = kcu.constraint_name
+                    AND tc.table_schema = kcu.table_schema
+                JOIN information_schema.constraint_column_usage AS ccu
+                    ON ccu.constraint_name = tc.constraint_name
+                    AND ccu.table_schema = tc.table_schema
+                WHERE tc.constraint_type = 'FOREIGN KEY'
+                    AND tc.table_schema = 'public'
+            """
+            params = []
+
+            if table_name:
+                query += """
+                    AND (tc.table_name = $1 OR ccu.table_name = $1)
+                """
+                params.append(table_name)
+
+            query += " ORDER BY tc.table_name, kcu.column_name"
+
+            if params:
+                rows = await asyncio.wait_for(
+                    connection.fetch(query, *params), timeout=15.0
+                )
+            else:
+                rows = await asyncio.wait_for(
+                    connection.fetch(query), timeout=15.0
+                )
+
+            if not rows:
+                if table_name:
+                    return f"No foreign key relationships found involving table '{table_name}'."
+                return "No foreign key relationships found in the database."
+
+            result_lines = []
+            if table_name:
+                result_lines.append(
+                    f"Foreign key relationships involving '{table_name}':"
+                )
+            else:
+                result_lines.append("All foreign key relationships:")
+
+            result_lines.append("")
+
+            for row in rows:
+                result_lines.append(
+                    f"  {row['source_table']}.{row['source_column']} → "
+                    f"{row['target_table']}.{row['target_column']}  "
+                    f"(constraint: {row['constraint_name']})"
+                )
+
+            return "\n".join(result_lines)
+
+    except asyncio.TimeoutError:
+        return "Relationship query error: Query timeout"
+    except Exception as e:
+        logger.error(f"Relationship query error: {e}")
+        return f"Relationship query error: {str(e)}"
+
+
+@mcp.tool()
 async def test_connection(ctx: Context) -> str:
     """
     Test the database connection and return connection info.

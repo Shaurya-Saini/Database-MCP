@@ -5,6 +5,12 @@ Main FastAPI application for Universal Database Chat Assistant.
 from dotenv import load_dotenv
 load_dotenv()
 
+import logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
+    datefmt="%H:%M:%S",
+)
 import os
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -23,7 +29,8 @@ from services.saved_queries_service import SavedQueriesService
 from llm_providers import (
     OpenAIProvider,
     AnthropicProvider,
-    GroqProvider
+    GroqProvider,
+    GeminiProvider
 )
 from exceptions import (
     DatabaseConnectionError,
@@ -211,7 +218,20 @@ async def get_config():
             ),
             LLMProviderConfig(
                 provider="groq",
-                models=["mixtral-8x7b-32768", "llama3-70b-8192", "llama3-8b-8192"],
+                models=[
+                    "meta-llama/llama-4-scout-17b-16e-instruct",
+                    "meta-llama/llama-4-maverick-17b-128e-instruct",
+                    "llama-3.3-70b-versatile",
+                    "llama-3.1-8b-instant",
+                    "qwen-2.5-32b",
+                ],
+                requires_api_key=True,
+                supports_streaming=False,
+                supports_tools=True
+            ),
+            LLMProviderConfig(
+                provider="gemini",
+                models=["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash"],
                 requires_api_key=True,
                 supports_streaming=False,
                 supports_tools=True
@@ -291,6 +311,8 @@ async def execute_query(request: QueryRequest):
         llm_provider = AnthropicProvider(api_key=request.api_key, model=request.llm_model)
     elif request.llm_provider == "groq":
         llm_provider = GroqProvider(api_key=request.api_key, model=request.llm_model)
+    elif request.llm_provider == "gemini":
+        llm_provider = GeminiProvider(api_key=request.api_key, model=request.llm_model)
     else:
         raise HTTPException(status_code=400, detail=f"Unsupported LLM provider: {request.llm_provider}")
     
