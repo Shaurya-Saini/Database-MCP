@@ -6,6 +6,7 @@ Exposes database tools (query, schema, modification, test) via the MCP protocol.
 """
 
 import asyncio
+import json
 import os
 import ssl
 from contextlib import asynccontextmanager
@@ -18,6 +19,13 @@ load_dotenv()
 
 from mcp.server.fastmcp import FastMCP, Context
 import asyncpg
+import sqlparse
+from sqlparse import tokens as sql_tokens
+
+# Hard cap on rows pulled from Postgres per query_database call. Enforced via
+# a server-side cursor (see query_database) so an unbounded query never
+# materializes more than this many rows in memory, regardless of table size.
+MAX_QUERY_ROWS = 100
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -107,84 +115,145 @@ async def database_lifespan(server: FastMCP) -> AsyncIterator[DatabaseContext]:
 mcp = FastMCP("PostgreSQL Database Server", lifespan=database_lifespan)
 
 
+_DISALLOWED_KEYWORDS = {
+    "INSERT", "UPDATE", "DELETE", "DROP", "TRUNCATE", "ALTER", "CREATE",
+    "GRANT", "REVOKE", "MERGE", "CALL", "EXECUTE", "COPY", "VACUUM",
+    "REINDEX", "REFRESH", "INTO", "LOCK",
+}
+
+
 def is_safe_query(query: str) -> bool:
-    """Check if query is a safe SELECT statement."""
-    query_clean = query.strip().upper()
-    return query_clean.startswith("SELECT")
+    """
+    Check if a query is a read-only SELECT — including WITH/CTE queries,
+    window functions, and recursive queries, which real analytical SQL needs.
 
+    A plain `query.startswith("SELECT")` check (the previous implementation)
+    has two problems: it rejects every CTE (`WITH ... SELECT ...`), and it
+    fails to catch writes disguised as a SELECT, e.g. `SELECT ... INTO
+    new_table` or a writable CTE like
+    `WITH x AS (INSERT INTO t ... RETURNING *) SELECT * FROM x`.
 
-def is_safe_modification_query(query: str) -> bool:
-    """Check if query is a safe modification (INSERT, UPDATE, DELETE)."""
-    query_clean = query.strip().upper()
-    dangerous_keywords = ["DROP", "TRUNCATE", "ALTER", "CREATE", "GRANT", "REVOKE"]
-    return (
-        query_clean.startswith(("INSERT", "UPDATE", "DELETE"))
-        and not any(keyword in query_clean for keyword in dangerous_keywords)
-    )
+    This tokenizes the SQL with sqlparse instead of pattern-matching the raw
+    string, so:
+    - `WITH ...` statements are allowed (CTEs are essential for real analysis).
+    - Any write/DDL keyword appearing ANYWHERE in the statement — including
+      inside a CTE body — is rejected, catching writable-CTE smuggling.
+    - `SELECT ... INTO ...` is rejected (INTO is in the disallowed set).
+    - Stacked statements (`SELECT 1; DROP TABLE x;`) are rejected.
+    - Keywords that appear inside string literals or identifiers (e.g. a
+      WHERE clause matching the literal 'DELETE') are correctly ignored,
+      since sqlparse tokenizes those as literals/names, not keywords.
+
+    Note: this is one layer of defense. The actual query execution in
+    `query_database` additionally runs inside a Postgres-level read-only
+    transaction, so even a gap in this parser cannot result in a write.
+    """
+    try:
+        statements = [
+            s for s in sqlparse.parse(query)
+            if s.token_first(skip_cm=True) is not None
+        ]
+    except Exception:
+        return False
+
+    if len(statements) != 1:
+        return False
+
+    stmt = statements[0]
+    first_token = stmt.token_first(skip_cm=True)
+    if first_token is None:
+        return False
+
+    if first_token.value.upper() not in ("SELECT", "WITH"):
+        return False
+
+    for token in stmt.flatten():
+        if token.ttype in sql_tokens.Keyword and token.value.upper() in _DISALLOWED_KEYWORDS:
+            return False
+
+    return True
 
 
 @mcp.tool()
 async def query_database(ctx: Context, query: str, params: list | None = None) -> str:
     """
-    Execute a SELECT query on the database.
+    Execute a read-only query against the database. Supports plain SELECTs
+    as well as WITH/CTE queries, window functions, and recursive queries —
+    anything needed for real analytical SQL — as long as it performs no writes.
 
     Args:
-        query: SQL SELECT query to execute
-        params: Optional parameters for the query
+        query: SQL SELECT or WITH/CTE query to execute
+        params: Optional positional parameters for the query ($1, $2, ...)
 
     Returns:
-        Query results as formatted string
+        A JSON object: {"columns": [...], "rows": [{...}, ...],
+        "row_count": N, "truncated": bool}, or {"error": "..."} on failure.
+        Results are capped to the first MAX_QUERY_ROWS rows; "truncated"
+        indicates whether more rows existed beyond that cap.
     """
     if params is None:
         params = []
 
     if not is_safe_query(query):
-        return "Error: Only SELECT queries are allowed for this tool"
+        return json.dumps({
+            "error": (
+                "Only read-only SELECT/WITH queries are allowed. Writes, DDL, "
+                "SELECT INTO, and multiple statements in one call are rejected."
+            )
+        })
 
     try:
         db_context = ctx.request_context.lifespan_context
         pool = db_context.pool
 
         async with pool.acquire() as connection:
-            if params:
-                rows = await asyncio.wait_for(
-                    connection.fetch(query, *params), timeout=30.0
+            # Enforce read-only at the Postgres level as defense-in-depth:
+            # even if a query slips past is_safe_query's parsing, Postgres
+            # itself will refuse to execute any write inside this transaction.
+            # A server-side cursor is used (fetch(N)) instead of connection.fetch()
+            # so an unbounded query never materializes more than MAX_QUERY_ROWS+1
+            # rows in memory, regardless of the underlying table's size.
+            async with connection.transaction(readonly=True):
+                cursor = await (
+                    connection.cursor(query, *params) if params
+                    else connection.cursor(query)
                 )
-            else:
                 rows = await asyncio.wait_for(
-                    connection.fetch(query), timeout=30.0
+                    cursor.fetch(MAX_QUERY_ROWS + 1), timeout=30.0
                 )
+
+            truncated = len(rows) > MAX_QUERY_ROWS
+            rows = rows[:MAX_QUERY_ROWS]
 
             if not rows:
-                return "No results found"
+                return json.dumps({
+                    "columns": [], "rows": [], "row_count": 0, "truncated": False
+                })
 
-            result_lines = []
-            if rows:
-                headers = list(rows[0].keys())
-                result_lines.append(" | ".join(headers))
-                result_lines.append("-" * len(result_lines[0]))
+            columns = list(rows[0].keys())
+            result_rows = [dict(row) for row in rows]
 
-                for row in rows[:100]:  # Limit to 100 rows
-                    result_lines.append(
-                        " | ".join(str(value) for value in row.values())
-                    )
-
-                if len(rows) > 100:
-                    result_lines.append(f"... and {len(rows) - 100} more rows")
-
-            return "\n".join(result_lines)
+            return json.dumps({
+                "columns": columns,
+                "rows": result_rows,
+                "row_count": len(result_rows),
+                "truncated": truncated,
+            }, default=str)
 
     except asyncio.TimeoutError:
-        return "Database error: Query timeout"
+        return json.dumps({"error": "Query timeout"})
     except Exception as e:
         logger.error(f"Database query error: {e}")
-        return f"Database error: {str(e)}"
+        return json.dumps({"error": f"Database error: {str(e)}"})
 
 
 @mcp.tool()
 async def get_table_schema(ctx: Context, table_name: str = None) -> str:
     """
-    Get database schema information.
+    Get database schema information. For a specific table, this includes
+    columns, the primary key, unique constraints, and indexes — use this to
+    reason about join cardinality (PK vs. non-unique column), which columns
+    are safe to assume unique, and what's indexed.
 
     Args:
         table_name: Specific table name (optional, returns all tables if not specified)
@@ -201,7 +270,7 @@ async def get_table_schema(ctx: Context, table_name: str = None) -> str:
                 query = """
                     SELECT column_name, data_type, is_nullable, column_default
                     FROM information_schema.columns
-                    WHERE table_name = $1
+                    WHERE table_schema = 'public' AND table_name = $1
                     ORDER BY ordinal_position
                 """
                 rows = await asyncio.wait_for(
@@ -222,6 +291,71 @@ async def get_table_schema(ctx: Context, table_name: str = None) -> str:
                         f"{row['column_name']} | {row['data_type']} | "
                         f"{row['is_nullable']} | {row['column_default'] or 'None'}"
                     )
+
+                pk_rows = await asyncio.wait_for(
+                    connection.fetch(
+                        """
+                        SELECT kcu.column_name
+                        FROM information_schema.table_constraints tc
+                        JOIN information_schema.key_column_usage kcu
+                            ON tc.constraint_name = kcu.constraint_name
+                            AND tc.table_schema = kcu.table_schema
+                        WHERE tc.table_schema = 'public' AND tc.table_name = $1
+                            AND tc.constraint_type = 'PRIMARY KEY'
+                        ORDER BY kcu.ordinal_position
+                        """,
+                        table_name,
+                    ),
+                    timeout=15.0,
+                )
+                pk_cols = [r["column_name"] for r in pk_rows]
+
+                unique_rows = await asyncio.wait_for(
+                    connection.fetch(
+                        """
+                        SELECT tc.constraint_name,
+                               array_agg(kcu.column_name ORDER BY kcu.ordinal_position) AS cols
+                        FROM information_schema.table_constraints tc
+                        JOIN information_schema.key_column_usage kcu
+                            ON tc.constraint_name = kcu.constraint_name
+                            AND tc.table_schema = kcu.table_schema
+                        WHERE tc.table_schema = 'public' AND tc.table_name = $1
+                            AND tc.constraint_type = 'UNIQUE'
+                        GROUP BY tc.constraint_name
+                        """,
+                        table_name,
+                    ),
+                    timeout=15.0,
+                )
+
+                index_rows = await asyncio.wait_for(
+                    connection.fetch(
+                        "SELECT indexname, indexdef FROM pg_indexes "
+                        "WHERE schemaname = 'public' AND tablename = $1 "
+                        "ORDER BY indexname",
+                        table_name,
+                    ),
+                    timeout=15.0,
+                )
+
+                result_lines.append("")
+                result_lines.append(
+                    f"Primary key: {', '.join(pk_cols) if pk_cols else '(none)'}"
+                )
+
+                if unique_rows:
+                    result_lines.append("Unique constraints:")
+                    for r in unique_rows:
+                        result_lines.append(f"  - ({', '.join(r['cols'])})")
+                else:
+                    result_lines.append("Unique constraints: (none)")
+
+                if index_rows:
+                    result_lines.append("Indexes:")
+                    for r in index_rows:
+                        result_lines.append(f"  - {r['indexname']}: {r['indexdef']}")
+                else:
+                    result_lines.append("Indexes: (none)")
             else:
                 query = """
                     SELECT table_name, table_type
@@ -316,12 +450,31 @@ async def sample_table_data(
             result_lines = []
             safe_table = _safe_ident(table_name)
 
-            # Always show row count
-            row_count = await asyncio.wait_for(
-                connection.fetchval(f"SELECT COUNT(*) FROM {safe_table}"),
-                timeout=15.0,
-            )
-            result_lines.append(f"Table '{table_name}' has {row_count} total rows.\n")
+            # Row count: use the planner's row estimate (instant, from table
+            # statistics) instead of always running a full-table COUNT(*),
+            # which would be a full scan on large tables and risks timing out
+            # exactly on the real-world databases this tool needs to handle.
+            # Only fall back to an exact COUNT(*) for small tables, where the
+            # scan is cheap and the estimate is least reliable.
+            estimate = await asyncio.wait_for(
+                connection.fetchval(
+                    "SELECT reltuples::bigint FROM pg_class WHERE oid = to_regclass($1)",
+                    f"public.{table_name}",
+                ),
+                timeout=10.0,
+            ) or 0
+
+            if estimate < 10000:
+                row_count = await asyncio.wait_for(
+                    connection.fetchval(f"SELECT COUNT(*) FROM {safe_table}"),
+                    timeout=15.0,
+                )
+                result_lines.append(f"Table '{table_name}' has {row_count} total rows.\n")
+            else:
+                result_lines.append(
+                    f"Table '{table_name}' has ~{estimate} rows (estimated from table "
+                    f"statistics; exact COUNT(*) skipped for performance on large tables).\n"
+                )
 
             if column_name:
                 # Verify column exists

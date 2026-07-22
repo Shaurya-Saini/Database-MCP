@@ -17,6 +17,10 @@ cryptography==43.0.1
 # MCP SDK (Model Context Protocol)
 mcp>=1.0.0
 
+# SQL statement validation (used to safely allow read-only CTEs/window
+# functions while rejecting writes smuggled inside them)
+sqlparse>=0.5.0
+
 # LLM provider SDKs
 openai>=1.52.2
 anthropic==0.39.0

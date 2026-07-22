@@ -133,10 +133,40 @@ class MCPClient:
     def _cap_result_size(self, result: str, max_chars: int = 1500) -> str:
         """
         Cap a tool result to max_chars to prevent oversized messages.
-        Preserves the beginning (headers, summaries) and notes truncation.
+
+        query_database now returns JSON ({"columns": ..., "rows": [...]}), so
+        a blind character slice would cut mid-object and hand the LLM invalid
+        JSON. For that shape, cap by dropping rows from the end instead —
+        producing a smaller but still syntactically valid JSON payload. Other
+        tools (schema/sample-data/relationships) still return plain text and
+        fall back to the previous character-slice behavior.
         """
         if len(result) <= max_chars:
             return result
+
+        try:
+            parsed = json.loads(result)
+        except (json.JSONDecodeError, TypeError):
+            parsed = None
+
+        if isinstance(parsed, dict) and "rows" in parsed and isinstance(parsed["rows"], list):
+            full_rows = parsed["rows"]
+            capped = dict(parsed)
+            kept = []
+            for row in full_rows:
+                candidate = kept + [row]
+                capped["rows"] = candidate
+                if len(json.dumps(capped, default=str)) > max_chars:
+                    capped["rows"] = kept
+                    break
+                kept = candidate
+            capped["truncated"] = True
+            capped["note"] = (
+                f"Row list shown to you is capped to {len(kept)}/{len(full_rows)} rows "
+                f"to save context space; row_count reflects the full result."
+            )
+            return json.dumps(capped, default=str)
+
         return result[:max_chars] + f"\n... [truncated, {len(result)} total chars]"
 
     def _compress_old_messages(self, messages: list, preserve_after_index: int) -> None:
@@ -295,10 +325,10 @@ class MCPClient:
         system_prompt = """You are an expert data analyst. Your goal is to answer the user's analytical questions, provide insights, and solve problems using your access to their PostgreSQL database. You are not just a query generator; you are a partner in analyzing their data.
 
 You have access to database tools via MCP (Model Context Protocol):
-- `get_table_schema`: Get schema info for all tables or a specific table
+- `get_table_schema`: Get schema info for all tables, or for one table its columns, primary key, unique constraints, and indexes
 - `get_table_relationships`: Discover foreign key relationships between tables
 - `sample_table_data`: Explore actual data in a table — see sample rows or distinct values in a column
-- `query_database`: Execute SELECT queries against the database to gather data for your analysis
+- `query_database`: Execute a read-only query to gather data for your analysis. Supports WITH/CTE queries, window functions, and recursive queries — not just plain SELECT — so use CTEs, `ROW_NUMBER()`/`RANK()`, running totals, etc. where they make a complex question easier to answer in one query instead of several round trips. Returns JSON: {"columns": [...], "rows": [...], "row_count": N, "truncated": bool}.
 - `test_connection`: Test the database connection
 
 CRITICAL INSTRUCTION REGARDING TOOLS:
@@ -309,20 +339,31 @@ WORKFLOW — you MUST follow these steps in order every time you need data:
 1. DISCOVER STRUCTURE: Call `get_table_schema` (no args) to list all tables in the database.
 
 2. INSPECT RELEVANT TABLES: For each table that looks relevant to the user's question,
-   call `get_table_schema(table_name=...)` to see its columns and data types.
+   call `get_table_schema(table_name=...)` to see its columns, primary key, unique
+   constraints, and indexes. The primary key tells you what uniquely identifies a row
+   (important for knowing if a JOIN will multiply rows); indexes hint at what the
+   database is optimized to filter/sort on.
    Use `get_table_relationships()` if you need to perform JOINs.
 
 3. EXPLORE ACTUAL DATA (THIS IS THE MOST CRITICAL STEP):
    Before writing ANY query, you MUST understand the actual data stored in the tables.
    - Call `sample_table_data(table_name=...)` to see sample rows and understand
      what kind of data is stored, what the values look like, and how the data is organized.
-   - Call `sample_table_data(table_name=..., column_name=...)` on any column you plan
-     to filter or group by — this shows you the exact distinct values that exist.
+     For large tables the row count shown may be an estimate (marked with "~") rather
+     than an exact count — that's expected and fine to use as-is.
+   - Call `sample_table_data(table_name=..., column_name=...)` on any LOW-CARDINALITY
+     column you plan to filter or group by (e.g. status, category, type) — this shows
+     you the exact distinct values that exist. For high-cardinality columns (ids, emails,
+     free-text) this only shows the 50 lowest values, which is not representative — don't
+     rely on it to guess what values exist in those columns.
    - This step is essential. Without it you will guess wrong about what values exist
      and your queries will return 0 rows.
 
 4. GATHER DATA: Now that you understand the schema AND the actual data,
-   construct a SQL query that accurately matches the real values in the database to get the information you need.
+   construct a SQL query that accurately matches the real values in the database to get
+   the information you need. Prefer a single well-constructed query (using CTEs/window
+   functions if needed) over many simple ones when the question is inherently
+   multi-step (e.g. "top category per region" or "month-over-month change").
    Use the exact values, patterns, and column names you observed in step 3.
    Call `query_database` to fetch the data.
 
@@ -330,7 +371,7 @@ WORKFLOW — you MUST follow these steps in order every time you need data:
 
 RULES:
 - Act as an analyst answering the business/analytical question, not just a SQL converter.
-- Only generate SELECT queries (read-only).
+- Only generate read-only queries (SELECT, or WITH/CTE built entirely from SELECTs). Writes and DDL are rejected by the tool regardless.
 - NEVER skip the data exploration step — always look at real data before querying.
 - NEVER guess what values might exist in a column — always check first.
 - If a query returns no results, go back and explore the data again to understand why.
@@ -349,6 +390,7 @@ RULES:
         # Track the SQL queries executed
         sql_queries_executed = []
         last_query_results = []
+        last_query_truncated = False
         last_content = ""
         iteration = 0
         rate_limit_retries = 0
@@ -480,7 +522,7 @@ RULES:
 
                         # Track results from query_database
                         if function_name == "query_database" and tool_result:
-                            last_query_results = self._parse_table_results(tool_result)
+                            last_query_results, last_query_truncated = self._parse_query_result(tool_result)
                             logger.info(f"  │ Parsed rows: {len(last_query_results)}")
 
                         logger.info(f"  └─────────────────────────────────────────")
@@ -584,45 +626,37 @@ RULES:
             "results": last_query_results,
             "row_count": len(last_query_results),
             "execution_time_ms": round(execution_time_ms, 2),
-            "truncated": len(last_query_results) >= 100,
+            "truncated": last_query_truncated,
             "error": None,
         }
 
-    def _parse_table_results(self, raw_result: str) -> List[Dict[str, Any]]:
+    def _parse_query_result(self, raw_result: str) -> tuple[List[Dict[str, Any]], bool]:
         """
-        Parse the text table output from MCP tool into a list of dicts.
+        Parse the JSON result returned by the MCP query_database tool.
 
-        The MCP server returns results as pipe-separated text:
-            col1 | col2 | col3
-            -----------------
-            val1 | val2 | val3
+        query_database returns {"columns": [...], "rows": [{...}, ...],
+        "row_count": N, "truncated": bool} (or {"error": "..."} on failure).
+        Using JSON instead of the previous pipe-delimited text format avoids
+        silently corrupting/dropping rows whose values contain a literal "|"
+        or a newline (common in free-text columns), which the old delimiter-
+        based parser had no way to detect.
 
         Args:
-            raw_result: Raw text result from the MCP query_database tool
+            raw_result: Raw JSON text result from the MCP query_database tool
 
         Returns:
-            List of row dicts
+            (list of row dicts, truncated flag) — ([], False) on any parse
+            failure or error response.
         """
-        rows = []
-        if not raw_result or raw_result == "No results found":
-            return rows
+        if not raw_result:
+            return [], False
 
-        lines = raw_result.strip().split("\n")
-        if len(lines) < 2:
-            return rows
+        try:
+            parsed = json.loads(raw_result)
+        except json.JSONDecodeError:
+            return [], False
 
-        # First line is headers
-        headers = [h.strip() for h in lines[0].split("|")]
+        if not isinstance(parsed, dict) or "rows" not in parsed:
+            return [], False
 
-        # Skip separator line and parse data rows
-        for line in lines[2:]:
-            if line.startswith("..."):  # Truncation indicator
-                break
-            values = [v.strip() for v in line.split("|")]
-            if len(values) == len(headers):
-                row = {}
-                for header, value in zip(headers, values):
-                    row[header] = value
-                rows.append(row)
-
-        return rows
+        return parsed.get("rows", []) or [], bool(parsed.get("truncated", False))
